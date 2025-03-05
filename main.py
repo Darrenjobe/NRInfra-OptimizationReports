@@ -12,9 +12,9 @@ def header(canvas, doc):
     canvas.saveState()
     styles = getSampleStyleSheet()
     # Add logo  to the header
-    logo = "images/logo.jpg"
+    logo = "images/LOCALlogo.jpg"
     # Adjust the position of the logo as needed
-    canvas.drawImage(logo, doc.leftMargin, doc.height + doc.topMargin - 50, width=137.5, height=75)
+    canvas.drawImage(logo, doc.leftMargin, doc.height + doc.topMargin - 10, width=137.5*.5, height=75*.5)
     header_text = Paragraph(f"Report generated on: {datetime.now().strftime('%Y-%m-%d')}", styles['Normal'])
     w, h = header_text.wrap(doc.width, doc.topMargin)
     # Adjust the position of the header text as needed
@@ -29,11 +29,14 @@ def create_cover_page(doc, styles):
     cover_subtitle = Paragraph(f"Generated on: {datetime.now().strftime('%Y-%m-%d')}", styles['Normal'])
     # Add logo to the cover page
     logo = Image("images/logo.jpg", width=275, height=150)
-    elements.append(Spacer(1, 2 * inch))
+    elements.append(Spacer(1, 0.5 * inch))
+    # Add the elements to the cover page
     elements.append(logo)
     elements.append(Spacer(1, 0.5 * inch))
+    # Add the title and subtitle to the cover page
     elements.append(cover_title)
     elements.append(Spacer(1, 0.5 * inch))
+    # Add the subtitle to the cover page
     elements.append(cover_subtitle)
     elements.append(PageBreak())
     return elements

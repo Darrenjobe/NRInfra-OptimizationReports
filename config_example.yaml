@@ -1,0 +1,62 @@
+api_key: <YOUR NR USER APIKEY>
+logoPath:  "images/logo.jpg"
+sizes:
+  - name: "t3.micro"
+    cpu: 2
+    memory: 1  # in GiB
+    disk: 0   # EBS-Only
+    hourly_cost: 0.0104
+
+  - name: "t3.small"
+    cpu: 2
+    memory: 2  # in GiB
+    disk: 0   # EBS-Only
+    hourly_cost: 0.0208
+
+  - name: "t3.medium"
+    cpu: 2
+    memory: 4  # in GiB
+    disk: 0   # EBS-Only
+    hourly_cost: 0.0416
+
+  - name: "t3.large"
+    cpu: 2
+    memory: 8  # in GiB
+    disk: 0   # EBS-Only
+    hourly_cost: 0.0832
+
+  - name: "t3.xlarge"
+    cpu: 4
+    memory: 16  # in GiB
+    disk: 0   # EBS-Only
+    hourly_cost: 0.1664
+
+  - name: "t3.2xlarge"
+    cpu: 8
+    memory: 32  # in GiB
+    disk: 0   # EBS-Only
+    hourly_cost: 0.3328
+
+  - name: "m5.large"
+    cpu: 2
+    memory: 8  # in GiB
+    disk: 0   # EBS-Only
+    hourly_cost: 0.096
+
+  - name: "m5.xlarge"
+    cpu: 4
+    memory: 16  # in GiB
+    disk: 0   # EBS-Only
+    hourly_cost: 0.192
+
+  - name: "m5.2xlarge"
+    cpu: 8
+    memory: 32  # in GiB
+    disk: 0   # EBS-Only
+    hourly_cost: 0.384
+
+  - name: "c5.large"
+    cpu: 2
+    memory: 4  # in GiB
+    disk: 0   # EBS-Only
+    hourly_cost: 0.085

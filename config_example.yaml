@@ -1,5 +1,22 @@
 api_key: <YOUR NR USER APIKEY>
-logoPath:  "images/logo.jpg"
+account_id: 4120837
+
+# Report configuration
+resource_pool_name: "ResourcePool_Utilities"
+report_title: "VM Resources Optimization Report"
+report_days: 30
+output_file: "optimization_report.pdf"
+
+# Logo and icon paths
+logoPath: "images/logo.jpg"
+icons:
+  summary: "images/icons/summary.png"
+  cpu: "images/icons/cpu.png"
+  memory: "images/icons/memory.png"
+  storage: "images/icons/storage.png"
+  vm: "images/icons/vm.png"
+
+# Instance/VM sizes for recommendations
 sizes:
   - name: "t3.micro"
     cpu: 2

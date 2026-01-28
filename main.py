@@ -1,348 +1,726 @@
 import requests
 import yaml
+import os
 from reportlab.lib.pagesizes import letter
-from reportlab.platypus import BaseDocTemplate, PageTemplate, Table, TableStyle, Paragraph, Spacer, PageBreak, Frame, Image
-from reportlab.lib.styles import getSampleStyleSheet
+from reportlab.platypus import (BaseDocTemplate, PageTemplate, Table, TableStyle,
+                                 Paragraph, Spacer, PageBreak, Frame, Image, HRFlowable)
+from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib import colors
 from reportlab.lib.units import inch
-from datetime import datetime
+from reportlab.lib.enums import TA_LEFT, TA_RIGHT
+from datetime import datetime, timedelta
 
-# Header function to add the current date and logo to each page
-def header(canvas, doc):
+# Define colors to match the example reports
+HEADER_BLUE = colors.HexColor('#4A90A4')
+LIGHT_BLUE_ROW = colors.HexColor('#E8F4F8')
+WHITE_ROW = colors.white
+TEXT_DARK = colors.HexColor('#333333')
+
+
+def get_date_range(days):
+    """Calculate the date range for the report."""
+    end_date = datetime.now()
+    start_date = end_date - timedelta(days=days)
+    return start_date, end_date
+
+
+def format_date_range(start_date, end_date, days):
+    """Format the date range string for display."""
+    return f"{start_date.strftime('%b %d, %Y')} - {end_date.strftime('%b %d, %Y')}  {days} days"
+
+
+def create_page_header(canvas, doc, config, report_title):
+    """
+    Create the header for each page with:
+    - Logo and resource pool name on the left
+    - Report title and date range on the right
+    - Horizontal line separator
+    """
     canvas.saveState()
-    styles = getSampleStyleSheet()
-    # Add logo  to the header
-    logo = "images/LOCALlogo.jpg"
-    # Adjust the position of the logo as needed
-    canvas.drawImage(logo, doc.leftMargin, doc.height + doc.topMargin - 10, width=137.5*.5, height=75*.5)
-    header_text = Paragraph(f"Report generated on: {datetime.now().strftime('%Y-%m-%d')}", styles['Normal'])
-    w, h = header_text.wrap(doc.width, doc.topMargin)
-    # Adjust the position of the header text as needed
-    header_text.drawOn(canvas, doc.leftMargin + 150, doc.height + doc.topMargin - h)
+
+    # Get configuration values
+    logo_path = config.get('logoPath', 'images/logo.jpg')
+    pool_name = config.get('resource_pool_name', 'Resource Pool')
+    days = config.get('report_days', 30)
+    start_date, end_date = get_date_range(days)
+
+    page_width = letter[0]
+    left_margin = doc.leftMargin
+    right_margin = doc.rightMargin
+    top_y = doc.height + doc.topMargin + 20
+
+    # Draw logo on the left (if exists)
+    logo_width = 50
+    logo_height = 50
+    if os.path.exists(logo_path):
+        try:
+            canvas.drawImage(logo_path, left_margin, top_y - logo_height,
+                           width=logo_width, height=logo_height, preserveAspectRatio=True)
+        except:
+            pass
+
+    # Draw resource pool name below/beside logo
+    canvas.setFont('Helvetica', 10)
+    canvas.setFillColor(TEXT_DARK)
+    canvas.drawString(left_margin + logo_width + 10, top_y - 25, pool_name)
+
+    # Draw report title on the right (right-aligned)
+    canvas.setFont('Helvetica-Bold', 16)
+    title_width = canvas.stringWidth(report_title, 'Helvetica-Bold', 16)
+    canvas.drawString(page_width - right_margin - title_width, top_y - 15, report_title)
+
+    # Draw date range on the right
+    canvas.setFont('Helvetica', 10)
+    date_range = format_date_range(start_date, end_date, days)
+    date_width = canvas.stringWidth(date_range, 'Helvetica', 10)
+    canvas.drawString(page_width - right_margin - date_width, top_y - 30, date_range)
+
+    # Draw report generated timestamp
+    generated_text = f"Report Generated: {datetime.now().strftime('%m/%d/%y, %I:%M %p')}"
+    gen_width = canvas.stringWidth(generated_text, 'Helvetica', 10)
+    canvas.drawString(page_width - right_margin - gen_width, top_y - 45, generated_text)
+
+    # Draw horizontal line separator
+    line_y = top_y - 55
+    canvas.setStrokeColor(colors.HexColor('#CCCCCC'))
+    canvas.setLineWidth(1)
+    canvas.line(left_margin, line_y, page_width - right_margin, line_y)
+
     canvas.restoreState()
 
-# Function to create the cover page
-def create_cover_page(doc, styles):
+
+def create_header_function(config, report_title):
+    """Factory function to create a header function with specific title."""
+    def header(canvas, doc):
+        create_page_header(canvas, doc, config, report_title)
+    return header
+
+
+def create_styled_table(data, col_widths=None, has_header=True):
+    """
+    Create a table with styling matching the example reports:
+    - Light grey header with bold text
+    - Alternating light blue and white rows
+    - No grid lines (or very subtle ones)
+    """
+    table = Table(data, colWidths=col_widths)
+
+    style_commands = [
+        # Header styling
+        ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#F0F0F0')),
+        ('TEXTCOLOR', (0, 0), (-1, 0), TEXT_DARK),
+        ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+        ('FONTSIZE', (0, 0), (-1, 0), 9),
+        ('BOTTOMPADDING', (0, 0), (-1, 0), 8),
+        ('TOPPADDING', (0, 0), (-1, 0), 8),
+
+        # Body styling
+        ('FONTNAME', (0, 1), (-1, -1), 'Helvetica'),
+        ('FONTSIZE', (0, 1), (-1, -1), 9),
+        ('BOTTOMPADDING', (0, 1), (-1, -1), 6),
+        ('TOPPADDING', (0, 1), (-1, -1), 6),
+
+        # Alignment
+        ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
+        ('ALIGN', (-1, 0), (-1, -1), 'RIGHT'),  # Last column right-aligned (savings)
+        ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+
+        # Subtle grid
+        ('LINEBELOW', (0, 0), (-1, 0), 0.5, colors.HexColor('#CCCCCC')),
+    ]
+
+    # Add alternating row colors
+    if has_header:
+        for i in range(1, len(data)):
+            if i % 2 == 0:
+                style_commands.append(('BACKGROUND', (0, i), (-1, i), LIGHT_BLUE_ROW))
+            else:
+                style_commands.append(('BACKGROUND', (0, i), (-1, i), WHITE_ROW))
+
+    table.setStyle(TableStyle(style_commands))
+    return table
+
+
+def create_summary_page(cpu_savings, memory_savings, storage_savings, config, styles):
+    """
+    Create the summary page with icons for each category and total savings.
+    """
     elements = []
-    # Add the title and subtitle to the cover page
-    cover_title = Paragraph("Monthly Usage Report", styles['Title'])
-    cover_subtitle = Paragraph(f"Generated on: {datetime.now().strftime('%Y-%m-%d')}", styles['Normal'])
-    # Add logo to the cover page
-    logo = Image("images/logo.jpg", width=275, height=150)
-    elements.append(Spacer(1, 0.5 * inch))
-    # Add the elements to the cover page
-    elements.append(logo)
-    elements.append(Spacer(1, 0.5 * inch))
-    # Add the title and subtitle to the cover page
-    elements.append(cover_title)
-    elements.append(Spacer(1, 0.5 * inch))
-    # Add the subtitle to the cover page
-    elements.append(cover_subtitle)
+
+    # Total savings
+    total_savings = cpu_savings + memory_savings + storage_savings
+
+    # Total Potential Savings header
+    total_style = ParagraphStyle(
+        'TotalSavings',
+        parent=styles['Normal'],
+        fontSize=14,
+        fontName='Helvetica-Bold',
+        textColor=TEXT_DARK,
+        spaceAfter=20
+    )
+    elements.append(Paragraph(f"Total Potential Savings ${total_savings:,.2f}", total_style))
+    elements.append(Spacer(1, 20))
+
+    # Category items with icons
+    categories = [
+        ("CPU", cpu_savings, config.get('icons', {}).get('cpu')),
+        ("Memory", memory_savings, config.get('icons', {}).get('memory')),
+        ("Storage", storage_savings, config.get('icons', {}).get('storage')),
+        ("Abandoned VM Images", 0.00, None),
+        ("Powered Off VMs", 0.00, None),
+        ("Unused Template Images", 0.00, None),
+        ("Snapshots", 0.00, None),
+        ("Potential Zombie VMs", 0.00, None),
+    ]
+
+    category_style = ParagraphStyle(
+        'Category',
+        parent=styles['Normal'],
+        fontSize=12,
+        fontName='Helvetica-Bold',
+        textColor=TEXT_DARK,
+        leftIndent=60
+    )
+
+    for name, savings, icon_path in categories:
+        # Add icon if available and exists
+        if icon_path and os.path.exists(icon_path):
+            try:
+                icon = Image(icon_path, width=40, height=40)
+                elements.append(icon)
+            except:
+                pass
+
+        elements.append(Paragraph(f"{name} ${savings:,.2f}", category_style))
+        elements.append(Spacer(1, 15))
+
     elements.append(PageBreak())
     return elements
 
-# Helper function to create tables with consistent styling
-def create_table(data, header_color=colors.grey, text_color=colors.whitesmoke):
-    table = Table(data)
-    table.setStyle(TableStyle([
-        ('BACKGROUND', (0, 0), (-1, 0), header_color),
-        ('TEXTCOLOR', (0, 0), (-1, 0), text_color),
-        ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
-        ('GRID', (0, 0), (-1, -1), 1, colors.black),
-        ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold')
-    ]))
-    return table
 
-# Load instance size configuration from a YAML file
+def create_cpu_report_page(results, config, styles):
+    """
+    Create the CPU Optimization Report page with:
+    - Total Potential Savings header
+    - Table with VM, Utilization, Peak Utilization, Recommendations, Savings
+    """
+    elements = []
+
+    # Calculate total CPU savings
+    total_savings = sum(r.get('Savings', {}).get('CPU_Monthly', 0) for r in results)
+
+    # Total Potential Savings header
+    total_style = ParagraphStyle(
+        'TotalSavings',
+        parent=styles['Normal'],
+        fontSize=14,
+        fontName='Helvetica-Bold',
+        textColor=TEXT_DARK,
+        spaceAfter=20
+    )
+    elements.append(Paragraph(f"Total Potential Savings ${total_savings:,.2f}", total_style))
+    elements.append(Spacer(1, 12))
+
+    # Create table data
+    table_data = [["Virtual Machine", "Utilization", "Peak Utilization", "CPU Recommendations", "Saving($/Month)"]]
+
+    for result in results:
+        hostname = result.get('Hostname', '')
+        cpu_percent = result.get('CPUUtilization', 0)
+        cpu_used_mhz = result.get('CPUUsedMHz', 0)
+        cpu_total_mhz = result.get('CPUTotalMHz', 0)
+        peak_util = result.get('PeakCPU', 0)
+        current_cores = result.get('CurrentCores', 0)
+        recommended_cores = result.get('RecommendedCores', current_cores)
+        monthly_savings = result.get('Savings', {}).get('CPU_Monthly', 0)
+
+        # Format utilization string like "5.57% (555.9 MHz of 10 GHz)"
+        if cpu_total_mhz > 1000:
+            total_str = f"{cpu_total_mhz/1000:.1f} GHz"
+        else:
+            total_str = f"{cpu_total_mhz:.1f} MHz"
+
+        if cpu_used_mhz > 1000:
+            used_str = f"{cpu_used_mhz/1000:.1f} GHz"
+        else:
+            used_str = f"{cpu_used_mhz:.1f} MHz"
+
+        utilization = f"{cpu_percent:.2f}% ({used_str} of {total_str})"
+
+        # Format peak utilization
+        if peak_util > 1000:
+            peak_str = f"{peak_util/1000:.1f} GHz"
+        else:
+            peak_str = f"{peak_util:.1f} MHz"
+
+        # Format recommendation
+        if recommended_cores != current_cores:
+            recommendation = f"Decrease CPU Allocation from {current_cores} to {recommended_cores}"
+        else:
+            recommendation = "Right-sized"
+
+        table_data.append([
+            f"    {hostname}",  # Indent for icon space
+            utilization,
+            peak_str,
+            recommendation,
+            f"{monthly_savings:.2f}"
+        ])
+
+    # Create and add table
+    col_widths = [1.5*inch, 1.6*inch, 1.1*inch, 2.2*inch, 1.1*inch]
+    table = create_styled_table(table_data, col_widths)
+    elements.append(table)
+    elements.append(PageBreak())
+
+    return elements, total_savings
+
+
+def create_memory_report_page(results, config, styles):
+    """
+    Create the Memory Optimization Report page.
+    """
+    elements = []
+
+    # Calculate total Memory savings
+    total_savings = sum(r.get('Savings', {}).get('Memory_Monthly', 0) for r in results)
+
+    # Total Potential Savings header
+    total_style = ParagraphStyle(
+        'TotalSavings',
+        parent=styles['Normal'],
+        fontSize=14,
+        fontName='Helvetica-Bold',
+        textColor=TEXT_DARK,
+        spaceAfter=20
+    )
+    elements.append(Paragraph(f"Total Potential Savings ${total_savings:,.2f}", total_style))
+    elements.append(Spacer(1, 12))
+
+    # Create table data
+    table_data = [["Virtual Machine", "Utilization", "Peak Utilization", "Memory Recommendations", "Saving($/Month)"]]
+
+    for result in results:
+        hostname = result.get('Hostname', '')
+        mem_percent = result.get('averageMemoryUtil', 0)
+        mem_used_gb = result.get('MemoryUsedGB', 0)
+        mem_total_gb = result.get('MemoryTotalGB', 0)
+        peak_util_gb = result.get('PeakMemoryGB', mem_used_gb)
+        recommended_mem = result.get('RecommendedMemoryGB', mem_total_gb)
+        monthly_savings = result.get('Savings', {}).get('Memory_Monthly', 0)
+
+        # Format utilization string like "74.99% (3 GB of 4 GB)"
+        utilization = f"{mem_percent:.2f}% ({mem_used_gb:.1f} GB of {mem_total_gb:.1f} GB)"
+
+        # Format peak utilization
+        peak_str = f"{peak_util_gb:.1f} GB"
+
+        # Format recommendation
+        if recommended_mem != mem_total_gb:
+            recommendation = f"Decrease Memory Allocation from {mem_total_gb:.1f} GB to {recommended_mem:.1f} GB"
+        else:
+            recommendation = "Right-sized"
+
+        table_data.append([
+            f"    {hostname}",
+            utilization,
+            peak_str,
+            recommendation,
+            f"{monthly_savings:.2f}"
+        ])
+
+    # Create and add table
+    col_widths = [1.3*inch, 1.5*inch, 1.0*inch, 2.5*inch, 1.2*inch]
+    table = create_styled_table(table_data, col_widths)
+    elements.append(table)
+    elements.append(PageBreak())
+
+    return elements, total_savings
+
+
+def create_storage_report_page(storage_results, config, styles):
+    """
+    Create the Storage Optimization Report page with hierarchical VM/drive structure.
+    """
+    elements = []
+
+    # Calculate total Storage savings
+    total_savings = sum(r.get('Savings', {}).get('Storage_Monthly', 0) for r in storage_results)
+
+    # Total Potential Savings header
+    total_style = ParagraphStyle(
+        'TotalSavings',
+        parent=styles['Normal'],
+        fontSize=14,
+        fontName='Helvetica-Bold',
+        textColor=TEXT_DARK,
+        spaceAfter=20
+    )
+    elements.append(Paragraph(f"Total Potential Savings ${total_savings:,.2f}", total_style))
+    elements.append(Spacer(1, 12))
+
+    # Create table data
+    table_data = [["Virtual Machine", "Utilization", "Storage Recommendations", "Modify Recommendation", "Saving($/Month)"]]
+
+    # Group storage by hostname
+    storage_by_host = {}
+    for result in storage_results:
+        hostname = result.get('Hostname', '')
+        mount_point = result.get('MountPoint', '/')
+        if hostname not in storage_by_host:
+            storage_by_host[hostname] = []
+        storage_by_host[hostname].append(result)
+
+    for hostname, drives in storage_by_host.items():
+        # Add hostname row
+        total_used = sum(d.get('DiskUsedGB', 0) for d in drives)
+        total_size = sum(d.get('DiskTotalGB', 0) for d in drives)
+        if total_size > 0:
+            total_percent = (total_used / total_size) * 100
+        else:
+            total_percent = 0
+
+        table_data.append([
+            f"    {hostname}",
+            f"{total_percent:.2f}% ({total_used:.1f} GB of {total_size:.1f} GB)",
+            "",
+            "",
+            ""
+        ])
+
+        # Add drive rows
+        for drive in drives:
+            mount = drive.get('MountPoint', '/')
+            used_gb = drive.get('DiskUsedGB', 0)
+            total_gb = drive.get('DiskTotalGB', 0)
+            if total_gb > 0:
+                percent = (used_gb / total_gb) * 100
+            else:
+                percent = 0
+            recommended_size = drive.get('RecommendedSizeGB', total_gb)
+            monthly_savings = drive.get('Savings', {}).get('Storage_Monthly', 0)
+
+            # Format recommendation
+            if recommended_size != total_gb and recommended_size > 0:
+                recommendation = f"Change size of {mount} from {total_gb:.1f} GB to {recommended_size:.0f} GB"
+                modify_rec = "Credentials required."
+            else:
+                recommendation = ""
+                modify_rec = ""
+
+            table_data.append([
+                f"        {mount}",  # Extra indent for drive
+                f"{percent:.2f}% ({used_gb:.1f} GB of {total_gb:.1f} GB)",
+                recommendation,
+                modify_rec,
+                f"{monthly_savings:.2f}"
+            ])
+
+    # Create and add table
+    col_widths = [1.2*inch, 1.5*inch, 1.8*inch, 1.5*inch, 1.1*inch]
+    table = create_styled_table(table_data, col_widths)
+    elements.append(table)
+
+    return elements, total_savings
+
+
 def load_config(config_file='config.yaml'):
+    """Load configuration from a YAML file."""
     with open(config_file, 'r') as file:
         return yaml.safe_load(file)
 
-# Fetch data from New Relic's API using GraphQL queries with error handling
-def fetch_new_relic_data(api_key):
+
+def fetch_new_relic_data(api_key, account_id):
+    """
+    Fetch data from New Relic's API using GraphQL queries.
+    Returns system metrics and storage metrics.
+    """
     url = "https://api.newrelic.com/graphql"
-    # Set the headers including the API key
     headers = {
         "Content-Type": "application/json",
         "API-Key": api_key
     }
 
-    # First query to get system sample data
-    query1 = """
-    {
-      actor {
-        account(id: 4120837) {
-          nrql(query: "SELECT average(cpuPercent), average(memoryUsedPercent), average(diskUtilizationPercent), average(diskFreePercent), average(diskTotalBytes),average(memoryUsedBytes),average(diskUsedBytes),latest(coreCount),latest(instanceType), average(loadAverageOneMinute), average(loadAverageFifteenMinute) FROM SystemSample SINCE 30 days ago FACET hostname") {
+    # Query for system metrics including peak utilization
+    query1 = f"""
+    {{
+      actor {{
+        account(id: {account_id}) {{
+          nrql(query: "SELECT average(cpuPercent), max(cpuPercent) as 'peakCpuPercent', average(memoryUsedPercent), max(memoryUsedPercent) as 'peakMemoryPercent', average(diskUtilizationPercent), average(diskFreePercent), average(diskTotalBytes), average(memoryUsedBytes), average(memoryTotalBytes), average(diskUsedBytes), latest(coreCount), latest(instanceType), average(loadAverageOneMinute), average(loadAverageFifteenMinute), average(processorCount) FROM SystemSample SINCE 30 days ago FACET hostname") {{
             results
-          }
-        }
-      }
-    }
+          }}
+        }}
+      }}
+    }}
     """
+
     try:
-        # Send the first query
         response1 = requests.post(url, headers=headers, json={"query": query1})
-        # Check for bad responses
         response1.raise_for_status()
         response_json1 = response1.json()
-        # Check for errors in the response
         if 'errors' in response_json1:
             raise ValueError(f"API Error: {response_json1['errors']}")
-    # Handle network errors
     except requests.exceptions.RequestException as e:
         print(f"Network error: {e}")
         return None, None
-    # Handle API errors
     except ValueError as e:
         print(e)
         return None, None
 
-    # Second query to get storage sample data
-    query2 = """
-    {
-      actor {
-        account(id: 4120837) {
-          nrql(query: "FROM StorageSample SELECT latest(diskUsedPercent) as 'currentSize', predictLinear(diskUsedPercent, 1 week) as 'weekEstimateSize', predictLinear(diskUsedPercent, 1 month) as 'monthEstimateSize', predictLinear(diskUsedPercent, 3 months) as 'quarterEstimateSize' FACET hostname SINCE 30 days ago") {
+    # Query for storage data with mount points
+    query2 = f"""
+    {{
+      actor {{
+        account(id: {account_id}) {{
+          nrql(query: "FROM StorageSample SELECT latest(diskUsedPercent) as 'currentPercent', latest(diskUsedBytes) as 'diskUsedBytes', latest(diskTotalBytes) as 'diskTotalBytes', latest(mountPoint) as 'mountPoint', predictLinear(diskUsedPercent, 1 week) as 'weekEstimate', predictLinear(diskUsedPercent, 1 month) as 'monthEstimate', predictLinear(diskUsedPercent, 3 months) as 'quarterEstimate' FACET hostname, mountPoint SINCE 30 days ago") {{
             results
-          }
-        }
-      }
-    }
+          }}
+        }}
+      }}
+    }}
     """
+
     try:
-        # Send the second query
         response2 = requests.post(url, headers=headers, json={"query": query2})
-        # Raise an HTTPError for bad responses
         response2.raise_for_status()
-        # Parse the JSON response
         response_json2 = response2.json()
-        # Check for errors in the response
         if 'errors' in response_json2:
             raise ValueError(f"API Error: {response_json2['errors']}")
-    # Handle network errors
     except requests.exceptions.RequestException as e:
         print(f"Network error: {e}")
         return response_json1, None
-    # Handle API errors
     except ValueError as e:
         print(e)
         return response_json1, None
-    # Return the response JSON objects
+
     return response_json1, response_json2
 
-# Analyze usage data and suggest a lower allocation if possible
+
 def analyze_usage(data, config):
-    # Thresholds for CPU and memory utilization
+    """
+    Analyze CPU and Memory usage data and generate recommendations.
+    Returns results formatted for the new report style.
+    """
     CPU_OVER_THRESHOLD = 80
     CPU_UNDER_THRESHOLD = 20
     MEMORY_OVER_THRESHOLD = 80
     MEMORY_UNDER_THRESHOLD = 20
-    LOAD_OVER_FACTOR = 1.5
 
     analyzed_results = []
-    # Iterate over the results and map the data for analysis
+
     for result in data['data']['actor']['account']['nrql']['results']:
-        hostname = result['facet']
-        current_cpu = int(result.get('latest.coreCount', 0))
-        current_memory = result.get('average.memoryUsedBytes', 0) / (1024 ** 3)
-        avg_cpu_util = result.get('average.cpuPercent', 0)
-        avg_mem_util = result.get('average.memoryUsedPercent', 0)
-        avg_load = result.get('average.loadAverageOneMinute', 0)
-        current_instance_type = result.get('latest.instanceType', "Unknown")
+        hostname = result.get('facet', 'Unknown')
 
-        # Determine the status of the instance
-        status = "Right-Sized"
-        # Check if the instance is undersized or oversized
-        if avg_cpu_util > CPU_OVER_THRESHOLD or avg_mem_util > MEMORY_OVER_THRESHOLD or avg_load > (LOAD_OVER_FACTOR * current_cpu):
-            status = "Undersized"
-        elif avg_cpu_util < CPU_UNDER_THRESHOLD and avg_mem_util < MEMORY_UNDER_THRESHOLD:
-            status = "Oversized"
+        # CPU metrics
+        current_cores = int(result.get('latest.coreCount', 0) or result.get('average.processorCount', 2))
+        avg_cpu_percent = result.get('average.cpuPercent', 0) or 0
+        peak_cpu_percent = result.get('peakCpuPercent', avg_cpu_percent) or avg_cpu_percent
 
-        best_match = None
-        best_cost = float("inf")
-        best_memory_match = None
-        best_memory_cost = float("inf")
+        # Estimate MHz values (assuming ~2.5 GHz per core as typical)
+        mhz_per_core = 2500
+        cpu_total_mhz = current_cores * mhz_per_core
+        cpu_used_mhz = (avg_cpu_percent / 100) * cpu_total_mhz
+        peak_cpu_mhz = (peak_cpu_percent / 100) * cpu_total_mhz
 
-        # Find the best match for the instance sizes defined in the config
-        for config_size in config['sizes']:
-            config_cpu = config_size['cpu']
-            config_memory = config_size['memory']
-            config_cost = config_size['hourly_cost']
-            # If is under or over sized, check if the config has a better size and calculate the cost savings
-            if status == "Undersized" and config_cpu >= current_cpu and config_memory >= current_memory:
-                if config_cost < best_cost:
-                    best_match = config_size
-                    best_cost = config_cost
-            elif status == "Oversized" and config_cpu <= current_cpu and config_memory <= current_memory:
-                if config_cost < best_cost:
-                    best_match = config_size
-                    best_cost = config_cost
-            if status == "Undersized" and config_memory >= current_memory:
-                if config_cost < best_memory_cost:
-                    best_memory_match = config_size
-                    best_memory_cost = config_cost
-            elif status == "Oversized" and config_memory <= current_memory:
-                if config_cost < best_memory_cost:
-                    best_memory_match = config_size
-                    best_memory_cost = config_cost
+        # Memory metrics
+        mem_used_bytes = result.get('average.memoryUsedBytes', 0) or 0
+        mem_total_bytes = result.get('average.memoryTotalBytes', 0) or 0
+        avg_mem_percent = result.get('average.memoryUsedPercent', 0) or 0
+        peak_mem_percent = result.get('peakMemoryPercent', avg_mem_percent) or avg_mem_percent
 
-        # Append the analyzed result
+        mem_used_gb = mem_used_bytes / (1024 ** 3)
+        mem_total_gb = mem_total_bytes / (1024 ** 3) if mem_total_bytes > 0 else (mem_used_gb / (avg_mem_percent / 100) if avg_mem_percent > 0 else 4)
+        peak_mem_gb = (peak_mem_percent / 100) * mem_total_gb
+
+        # Determine recommendations
+        recommended_cores = current_cores
+        recommended_mem_gb = mem_total_gb
+        cpu_monthly_savings = 0
+        mem_monthly_savings = 0
+
+        # CPU recommendation logic
+        if avg_cpu_percent < CPU_UNDER_THRESHOLD and current_cores > 1:
+            # Oversized - recommend fewer cores
+            recommended_cores = max(1, int(current_cores * (peak_cpu_percent / 100 * 1.5)))
+            if recommended_cores < current_cores:
+                # Calculate savings (simplified - would need actual pricing data)
+                cpu_monthly_savings = (current_cores - recommended_cores) * 10  # $10/core/month estimate
+
+        # Memory recommendation logic
+        if avg_mem_percent < MEMORY_UNDER_THRESHOLD and mem_total_gb > 1:
+            # Oversized - recommend less memory
+            recommended_mem_gb = max(1, peak_mem_gb * 1.3)  # Add 30% buffer
+            if recommended_mem_gb < mem_total_gb:
+                # Calculate savings (simplified)
+                mem_monthly_savings = (mem_total_gb - recommended_mem_gb) * 5  # $5/GB/month estimate
+
         analyzed_results.append({
             "Hostname": hostname,
-            "CPUUtilization": avg_cpu_util,
-            "CurrentCores": current_cpu,
-            "CurrentMemory": current_memory,
-            "averageMemoryUtil": round(avg_mem_util, 2),
-            "CPU": best_match['name'] if best_match else "No better match found",
-            "Memory": best_memory_match['name'] if best_memory_match else "No better match found",
+            "CPUUtilization": avg_cpu_percent,
+            "CPUUsedMHz": cpu_used_mhz,
+            "CPUTotalMHz": cpu_total_mhz,
+            "PeakCPU": peak_cpu_mhz,
+            "CurrentCores": current_cores,
+            "RecommendedCores": recommended_cores,
+            "averageMemoryUtil": avg_mem_percent,
+            "MemoryUsedGB": mem_used_gb,
+            "MemoryTotalGB": mem_total_gb,
+            "PeakMemoryGB": peak_mem_gb,
+            "RecommendedMemoryGB": recommended_mem_gb,
             "Savings": {
-                "CPU": best_match['hourly_cost'] if best_match else 0,
-                "Memory": best_memory_match['hourly_cost'] if best_memory_match else 0
+                "CPU_Monthly": cpu_monthly_savings,
+                "Memory_Monthly": mem_monthly_savings
             }
         })
-    # Return the analyzed results
+
     return analyzed_results
 
-# Forecast disk usage based on historical data
-def forcast_usage(data, config):
-    analyzed_results = []
-    # Iterate over the results and map the data to
+
+def analyze_storage(data, config):
+    """
+    Analyze storage data and generate recommendations.
+    Returns results formatted for the new report style with mount points.
+    """
+    storage_results = []
+
+    if data is None:
+        return storage_results
+
     for result in data['data']['actor']['account']['nrql']['results']:
-        hostname = result['facet']
-        currentSize = result['currentSize']
-        current_instance_type = result.get('latest.instanceType', "Unknown")
-        week_estimate = result['weekEstimateSize']
-        month_estimate = result['monthEstimateSize']
-        quarter_estimate = result['quarterEstimateSize']
-        best_disk_match = None
-        best_disk_cost = float("inf")
+        facet = result.get('facet', ['Unknown', '/'])
+        if isinstance(facet, list):
+            hostname = facet[0] if len(facet) > 0 else 'Unknown'
+            mount_point = facet[1] if len(facet) > 1 else '/'
+        else:
+            hostname = facet
+            mount_point = '/'
 
-        # Find the best match for the disk size (Not Implemented in lieu of demonstrating the predictLinear for
-        # forcaseing. This could be implemented in a similar way to the CPU and Memory analysis above)
-        for config_size in config['sizes']:
-            config_disk = config_size['disk']
-            config_cost = config_size['hourly_cost']
-            if config_disk >= currentSize:
-                if config_cost < best_disk_cost:
-                    best_disk_match = config_size
-                    best_disk_cost = config_cost
+        disk_used_bytes = result.get('diskUsedBytes', 0) or 0
+        disk_total_bytes = result.get('diskTotalBytes', 0) or 0
+        current_percent = result.get('currentPercent', 0) or 0
 
-        # Append the forecasted result into the data
-        analyzed_results.append({
+        disk_used_gb = disk_used_bytes / (1024 ** 3)
+        disk_total_gb = disk_total_bytes / (1024 ** 3)
+
+        # Recommendation logic
+        recommended_size_gb = disk_total_gb
+        storage_monthly_savings = 0
+
+        # If utilization is low, recommend smaller disk
+        if current_percent < 30 and disk_total_gb > 50:
+            # Recommend size that would give ~70% utilization
+            recommended_size_gb = max(disk_used_gb * 1.5, 50)  # Minimum 50GB or 150% of used
+            if recommended_size_gb < disk_total_gb:
+                # Calculate savings (simplified - $0.10/GB/month estimate)
+                storage_monthly_savings = (disk_total_gb - recommended_size_gb) * 0.10
+
+        storage_results.append({
             "Hostname": hostname,
-            "CurrentInstanceType": current_instance_type,
-            "Disk": best_disk_match['name'] if best_disk_match else "No better match found",
+            "MountPoint": mount_point,
+            "DiskUsedGB": disk_used_gb,
+            "DiskTotalGB": disk_total_gb,
+            "DiskPercent": current_percent,
+            "RecommendedSizeGB": recommended_size_gb,
+            "WeekEstimate": result.get('weekEstimate', current_percent),
+            "MonthEstimate": result.get('monthEstimate', current_percent),
+            "QuarterEstimate": result.get('quarterEstimate', current_percent),
             "Savings": {
-                "Disk": best_disk_match['hourly_cost'] if best_disk_match else 0
-            },
-            "DiskUtilization": {
-                "Current": currentSize,
-                "WeekEstimate": week_estimate,
-                "MonthEstimate": month_estimate,
-                "QuarterEstimate": quarter_estimate
+                "Storage_Monthly": storage_monthly_savings
             }
         })
-    # Return the analyzed results
-    return analyzed_results
 
-# Generate PDF report with the analyzed and forecasted data
-def generate_pdf_report(results, forcastresults, output_file="report.pdf"):
-    # Create a PDF document with a cover page and main content
-    doc = BaseDocTemplate(output_file, pagesize=letter)
-    # Define the frame for the content
-    frame = Frame(doc.leftMargin, doc.bottomMargin, doc.width, doc.height - 2 * inch, id='normal')
-    # Add the cover page template and main content template
-    cover_template = PageTemplate(id='cover', frames=frame)  # Cover page template without header
-    # Main content template with header
-    main_template = PageTemplate(id='main', frames=frame, onPage=header)  # Main content template with header
-    # Add the templates to the document
-    doc.addPageTemplates([cover_template, main_template])
+    return storage_results
+
+
+def generate_pdf_report(results, storage_results, config, output_file="report.pdf"):
+    """
+    Generate the PDF report with all sections matching the example format.
+    """
+    doc = BaseDocTemplate(output_file, pagesize=letter,
+                          leftMargin=0.5*inch, rightMargin=0.5*inch,
+                          topMargin=1*inch, bottomMargin=0.5*inch)
+
+    # Create frames for different page types
+    frame = Frame(doc.leftMargin, doc.bottomMargin,
+                  doc.width, doc.height - 0.5*inch, id='normal')
+
+    # Page templates for different report sections
+    summary_header = create_header_function(config, "VM Resources Optimization Report")
+    cpu_header = create_header_function(config, "CPU Optimization Report")
+    memory_header = create_header_function(config, "Memory Optimization Report")
+    storage_header = create_header_function(config, "Storage Optimization Report")
+
+    summary_template = PageTemplate(id='summary', frames=frame, onPage=summary_header)
+    cpu_template = PageTemplate(id='cpu', frames=frame, onPage=cpu_header)
+    memory_template = PageTemplate(id='memory', frames=frame, onPage=memory_header)
+    storage_template = PageTemplate(id='storage', frames=frame, onPage=storage_header)
+
+    doc.addPageTemplates([summary_template, cpu_template, memory_template, storage_template])
 
     elements = []
     styles = getSampleStyleSheet()
 
-    # Add cover page
-    elements.extend(create_cover_page(doc, styles))
+    # Generate report sections and collect savings
+    cpu_elements, cpu_savings = create_cpu_report_page(results, config, styles)
+    memory_elements, memory_savings = create_memory_report_page(results, config, styles)
+    storage_elements, storage_savings = create_storage_report_page(storage_results, config, styles)
 
-    # Switch to main template for the rest of the document
-    doc.handle_nextPageTemplate('main')
+    # Summary page (first)
+    summary_elements = create_summary_page(cpu_savings, memory_savings, storage_savings, config, styles)
+    elements.extend(summary_elements)
 
-    # CPU Usage Analysis section
-    elements.append(Paragraph("CPU Usage Analysis", styles['Title']))
-    elements.append(Spacer(1, 12))
-    # Create a table for the CPU data
-    cpu_data = [["Hostname", "CPU %\n(Monthly)", "Recommended\nSize", "Est Savings\n(Hourly)", "Est Savings\n(Monthly)"]]
-    for result in results:
-        cpu_data.append([result["Hostname"], f"{result['CPUUtilization']:.2f}%", result["CPU"], f"${result['Savings'].get('CPU', 0):.2f}", f"${result['Savings'].get('CPU', 0) * 720:.2f}"])
-    # Add the CPU data table to the elements
-    elements.append(create_table(cpu_data))
-    # Add a spacer for layout
-    elements.append(Spacer(1, 24))
-    # Add a page break to start a new section
-    elements.append(PageBreak())
+    # Switch to CPU template
+    from reportlab.platypus import NextPageTemplate
+    elements.append(NextPageTemplate('cpu'))
+    elements.extend(cpu_elements)
 
-    # Memory Usage Analysis section
-    elements.append(Paragraph("Memory Usage Analysis", styles['Title']))
-    elements.append(Spacer(1, 12))
-    # Create a table for the memory data
-    memory_data = [["Hostname", "Mem Pct", "Recommended\nSize", "Est Savings\n(Hourly)", "Est Savings\n(Monthly)"]]
-    for result in results:
-        memory_data.append([result["Hostname"], f"{result['averageMemoryUtil']:.2f}%", result["Memory"], f"${result['Savings'].get('Memory', 0):.2f}", f"${result['Savings'].get('Memory', 0) * 720:.2f}"])
-    # Add the memory data table to the elements
-    elements.append(create_table(memory_data))
-    elements.append(Spacer(1, 24))
-    # Add a page break to start a new section
-    elements.append(PageBreak())
+    # Switch to Memory template
+    elements.append(NextPageTemplate('memory'))
+    elements.extend(memory_elements)
 
-    # Disk Utilization and Forecast section
-    elements.append(Paragraph("Current Disk Utilization and Forecast", styles['Title']))
-    elements.append(Spacer(1, 12))
-    # Create a table for the disk utilization forecast data
-    forcast = [["Hostname", "Current\nUtilization", "Week\nEstimate", "Month\nEstimate", "Quarter\nEstimate"]]
-    for result in forcastresults:
-        disk_util = result.get("DiskUtilization", {})
-        week_estimate = min(max(disk_util.get('WeekEstimate', 0), 0), 100)
-        month_estimate = min(max(disk_util.get('MonthEstimate', 0), 0), 100)
-        quarter_estimate = min(max(disk_util.get('QuarterEstimate', 0), 0), 100)
-        forcast.append([result["Hostname"], f"{disk_util.get('Current', 0):.2f}%", f"{week_estimate:.2f}%", f"{month_estimate:.2f}%", f"{quarter_estimate:.2f}%"])
-    #
-    table = create_table(forcast)
-    # Add color coding to the disk utilization forecast table when thresholds are hit
-    for row_idx, row in enumerate(forcast[1:], start=1):
-        for col_idx, cell in enumerate(row[1:], start=1):
-            value = float(cell.strip('%'))
-            # If the value is over 90%, color it red, if over 80%, color it yellow
-            if value > 90:
-                table.setStyle(TableStyle([('BACKGROUND', (col_idx, row_idx), (col_idx, row_idx), colors.red)]))
-            elif value > 80:
-                table.setStyle(TableStyle([('BACKGROUND', (col_idx, row_idx), (col_idx, row_idx), colors.yellow)]))
-    elements.append(table)
-    # Add a spacer for layout
-    elements.append(Spacer(1, 24))
-    # build the PDF document with the elements
+    # Switch to Storage template
+    elements.append(NextPageTemplate('storage'))
+    elements.extend(storage_elements)
+
+    # Build the PDF
     doc.build(elements)
-    # Print the success of the generated PDF report and location
     print(f"PDF Report generated: {output_file}")
 
-# Main function to load config, fetch data, analyze it, and generate the PDF report
+
 def main():
-    # Load the configuration from the YAML file (config.yaml)
+    """Main function to orchestrate report generation."""
+    # Load configuration
     config = load_config()
-    # Fetch data from New Relic's API
-    api_key = config['api_key']
-    # Fetch data from New Relic's API (CPU and Memory usage data, and disk usage forecast data)
-    data1, data2 = fetch_new_relic_data(api_key)
-    # Check if the data was fetched successfully
-    if data1 is None or data2 is None:
-        print("Failed to fetch data from New Relic API.")
+
+    # Get API key and account ID
+    api_key = config.get('api_key')
+    account_id = config.get('account_id', 4120837)
+
+    if not api_key or api_key == '<YOUR NR USER APIKEY>':
+        print("Error: Please set your New Relic API key in config.yaml")
         return
-    # Analyze the CPU and Memory usage data, and look for alternative configurations
-    # (from options defined in config.yaml)
-    analyzed_results = analyze_usage(data1, config)
-    # Map the forcasted disk usage data (and potential to add sizing recommendations like CPU and Memory)
-    forcast_results = forcast_usage(data2, config)
-    # Generate the PDF report with the analyzed and forecasted data
-    generate_pdf_report(analyzed_results, forcast_results)
+
+    # Fetch data from New Relic
+    print("Fetching data from New Relic API...")
+    system_data, storage_data = fetch_new_relic_data(api_key, account_id)
+
+    if system_data is None:
+        print("Failed to fetch system data from New Relic API.")
+        return
+
+    # Analyze the data
+    print("Analyzing usage data...")
+    analyzed_results = analyze_usage(system_data, config)
+    storage_results = analyze_storage(storage_data, config)
+
+    # Generate the report
+    print("Generating PDF report...")
+    output_file = config.get('output_file', 'optimization_report.pdf')
+    generate_pdf_report(analyzed_results, storage_results, config, output_file)
+
+    print("Report generation complete!")
+
 
 if __name__ == "__main__":
     main()

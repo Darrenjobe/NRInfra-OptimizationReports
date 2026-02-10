@@ -688,38 +688,162 @@ def generate_pdf_report(results, storage_results, config, output_file="report.pd
     print(f"PDF Report generated: {output_file}")
 
 
+def generate_demo_data():
+    """Generate sample data for demo/testing purposes."""
+    demo_results = [
+        {
+            "Hostname": "AFMSyncService - AK",
+            "CPUUtilization": 5.57,
+            "CPUUsedMHz": 555.9,
+            "CPUTotalMHz": 10000,
+            "PeakCPU": 2200,
+            "CurrentCores": 4,
+            "RecommendedCores": 2,
+            "averageMemoryUtil": 45.0,
+            "MemoryUsedGB": 3.6,
+            "MemoryTotalGB": 8.0,
+            "PeakMemoryGB": 4.2,
+            "RecommendedMemoryGB": 8.0,
+            "Savings": {"CPU_Monthly": 20.0, "Memory_Monthly": 0.0}
+        },
+        {
+            "Hostname": "APRSERVER106 - SC",
+            "CPUUtilization": 2.93,
+            "CPUUsedMHz": 292.4,
+            "CPUTotalMHz": 10000,
+            "PeakCPU": 3700,
+            "CurrentCores": 4,
+            "RecommendedCores": 3,
+            "averageMemoryUtil": 62.0,
+            "MemoryUsedGB": 4.96,
+            "MemoryTotalGB": 8.0,
+            "PeakMemoryGB": 5.5,
+            "RecommendedMemoryGB": 8.0,
+            "Savings": {"CPU_Monthly": 10.0, "Memory_Monthly": 0.0}
+        },
+        {
+            "Hostname": "ESGAGS10",
+            "CPUUtilization": 2.27,
+            "CPUUsedMHz": 95,
+            "CPUTotalMHz": 4200,
+            "PeakCPU": 1500,
+            "CurrentCores": 2,
+            "RecommendedCores": 1,
+            "averageMemoryUtil": 74.99,
+            "MemoryUsedGB": 3.0,
+            "MemoryTotalGB": 4.0,
+            "PeakMemoryGB": 3.0,
+            "RecommendedMemoryGB": 3.7,
+            "Savings": {"CPU_Monthly": 10.0, "Memory_Monthly": 1.5}
+        },
+        {
+            "Hostname": "londoncw",
+            "CPUUtilization": 7.26,
+            "CPUUsedMHz": 724,
+            "CPUTotalMHz": 10000,
+            "PeakCPU": 4400,
+            "CurrentCores": 4,
+            "RecommendedCores": 3,
+            "averageMemoryUtil": 55.0,
+            "MemoryUsedGB": 8.8,
+            "MemoryTotalGB": 16.0,
+            "PeakMemoryGB": 10.0,
+            "RecommendedMemoryGB": 16.0,
+            "Savings": {"CPU_Monthly": 10.0, "Memory_Monthly": 0.0}
+        },
+        {
+            "Hostname": "spider",
+            "CPUUtilization": 8.47,
+            "CPUUsedMHz": 2500,
+            "CPUTotalMHz": 29900,
+            "PeakCPU": 5200,
+            "CurrentCores": 12,
+            "RecommendedCores": 3,
+            "averageMemoryUtil": 35.0,
+            "MemoryUsedGB": 11.2,
+            "MemoryTotalGB": 32.0,
+            "PeakMemoryGB": 14.0,
+            "RecommendedMemoryGB": 32.0,
+            "Savings": {"CPU_Monthly": 90.0, "Memory_Monthly": 0.0}
+        },
+    ]
+
+    demo_storage = [
+        {
+            "Hostname": "londoncw",
+            "MountPoint": "C:\\",
+            "DiskUsedGB": 111.3,
+            "DiskTotalGB": 149.5,
+            "DiskPercent": 74.44,
+            "RecommendedSizeGB": 129,
+            "Savings": {"Storage_Monthly": 2.05}
+        },
+        {
+            "Hostname": "londoncw",
+            "MountPoint": "E:\\",
+            "DiskUsedGB": 57.9,
+            "DiskTotalGB": 200.0,
+            "DiskPercent": 28.95,
+            "RecommendedSizeGB": 67,
+            "Savings": {"Storage_Monthly": 13.30}
+        },
+        {
+            "Hostname": "ESGAGS10",
+            "MountPoint": "C:\\",
+            "DiskUsedGB": 45.0,
+            "DiskTotalGB": 100.0,
+            "DiskPercent": 45.0,
+            "RecommendedSizeGB": 100.0,
+            "Savings": {"Storage_Monthly": 0.0}
+        },
+    ]
+
+    return demo_results, demo_storage
+
+
 def main():
     """Main function to orchestrate report generation."""
+    import sys
+
+    # Check for --demo flag
+    demo_mode = '--demo' in sys.argv
+
     # Load configuration
     config = load_config()
 
-    # Get API key and account ID
-    api_key = config.get('api_key')
-    account_id = config.get('account_id', 4120837)
+    if demo_mode:
+        print("Running in DEMO mode with sample data...")
+        analyzed_results, storage_results = generate_demo_data()
+    else:
+        # Get API key and account ID
+        api_key = config.get('api_key')
+        account_id = config.get('account_id', 4120837)
 
-    if not api_key or api_key == '<YOUR NR USER APIKEY>':
-        print("Error: Please set your New Relic API key in config.yaml")
-        return
+        if not api_key or api_key == '<YOUR NR USER APIKEY>':
+            print("Error: Please set your New Relic API key in config.yaml")
+            print("Tip: Use --demo flag to generate a sample report without API access")
+            return
 
-    # Fetch data from New Relic
-    print("Fetching data from New Relic API...")
-    system_data, storage_data = fetch_new_relic_data(api_key, account_id)
+        # Fetch data from New Relic
+        print("Fetching data from New Relic API...")
+        system_data, storage_data = fetch_new_relic_data(api_key, account_id)
 
-    if system_data is None:
-        print("Failed to fetch system data from New Relic API.")
-        return
+        if system_data is None:
+            print("Failed to fetch system data from New Relic API.")
+            print("Tip: Use --demo flag to generate a sample report without API access")
+            return
 
-    # Analyze the data
-    print("Analyzing usage data...")
-    analyzed_results = analyze_usage(system_data, config)
-    storage_results = analyze_storage(storage_data, config)
+        # Analyze the data
+        print("Analyzing usage data...")
+        analyzed_results = analyze_usage(system_data, config)
+        storage_results = analyze_storage(storage_data, config)
 
     # Generate the report
     print("Generating PDF report...")
     output_file = config.get('output_file', 'optimization_report.pdf')
     generate_pdf_report(analyzed_results, storage_results, config, output_file)
 
-    print("Report generation complete!")
+    print(f"Report generation complete! Output: {output_file}")
 
 
 if __name__ == "__main__":

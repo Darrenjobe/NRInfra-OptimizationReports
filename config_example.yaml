@@ -10,7 +10,7 @@ output_file: "optimization_report.pdf"
 # Cover page and business unit settings
 cover_title: "Optimization Reports for All VM Resources"
 business_unit: "CWOLC"
-copyright: "Copyright 2025 Quest Software Inc. ALL RIGHTS RESERVED."
+copyright: "Copyright 2025 New Relic Inc ALL RIGHTS RESERVED."
 
 # Logo and icon paths
 logoPath: "images/logo.jpg"

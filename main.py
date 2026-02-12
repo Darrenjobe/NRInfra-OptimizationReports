@@ -195,7 +195,6 @@ def create_summary_page(cpu_savings, memory_savings, storage_savings, config, st
         elements.append(Paragraph(f"{name} ${savings:,.2f}", category_style))
         elements.append(Spacer(1, 15))
 
-    elements.append(PageBreak())
     return elements
 
 
@@ -272,7 +271,6 @@ def create_cpu_report_page(results, config, styles):
     col_widths = [1.5*inch, 1.6*inch, 1.1*inch, 2.2*inch, 1.1*inch]
     table = create_styled_table(table_data, col_widths)
     elements.append(table)
-    elements.append(PageBreak())
 
     return elements, total_savings
 
@@ -334,7 +332,6 @@ def create_memory_report_page(results, config, styles):
     col_widths = [1.3*inch, 1.5*inch, 1.0*inch, 2.5*inch, 1.2*inch]
     table = create_styled_table(table_data, col_widths)
     elements.append(table)
-    elements.append(PageBreak())
 
     return elements, total_savings
 
@@ -360,7 +357,15 @@ def create_storage_report_page(storage_results, config, styles):
     elements.append(Paragraph(f"Total Potential Savings ${total_savings:,.2f}", total_style))
     elements.append(Spacer(1, 12))
 
-    # Create table data
+    # Create cell style for wrapping text
+    cell_style = ParagraphStyle(
+        'CellStyle',
+        parent=styles['Normal'],
+        fontSize=9,
+        leading=11
+    )
+
+    # Create table data with Paragraph objects for text wrapping
     table_data = [["Virtual Machine", "Utilization", "Storage Recommendations", "Modify Recommendation", "Saving($/Month)"]]
 
     # Group storage by hostname
@@ -382,8 +387,8 @@ def create_storage_report_page(storage_results, config, styles):
             total_percent = 0
 
         table_data.append([
-            f"    {hostname}",
-            f"{total_percent:.2f}% ({total_used:.1f} GB of {total_size:.1f} GB)",
+            Paragraph(f"&nbsp;&nbsp;{hostname}", cell_style),
+            Paragraph(f"{total_percent:.2f}% ({total_used:.1f} GB of {total_size:.1f} GB)", cell_style),
             "",
             "",
             ""
@@ -403,22 +408,22 @@ def create_storage_report_page(storage_results, config, styles):
 
             # Format recommendation
             if recommended_size != total_gb and recommended_size > 0:
-                recommendation = f"Change size of {mount} from {total_gb:.1f} GB to {recommended_size:.0f} GB"
-                modify_rec = "Credentials required."
+                recommendation = Paragraph(f"Change size of {mount} from {total_gb:.1f} GB to {recommended_size:.0f} GB", cell_style)
+                modify_rec = Paragraph("Credentials required.", cell_style)
             else:
                 recommendation = ""
                 modify_rec = ""
 
             table_data.append([
-                f"        {mount}",  # Extra indent for drive
-                f"{percent:.2f}% ({used_gb:.1f} GB of {total_gb:.1f} GB)",
+                Paragraph(f"&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;{mount}", cell_style),
+                Paragraph(f"{percent:.2f}% ({used_gb:.1f} GB of {total_gb:.1f} GB)", cell_style),
                 recommendation,
                 modify_rec,
                 f"{monthly_savings:.2f}"
             ])
 
-    # Create and add table
-    col_widths = [1.2*inch, 1.5*inch, 1.8*inch, 1.5*inch, 1.1*inch]
+    # Create and add table with wider columns
+    col_widths = [1.1*inch, 1.6*inch, 2.0*inch, 1.3*inch, 1.0*inch]
     table = create_styled_table(table_data, col_widths)
     elements.append(table)
 
@@ -637,6 +642,8 @@ def generate_pdf_report(results, storage_results, config, output_file="report.pd
     """
     Generate the PDF report with all sections matching the example format.
     """
+    from reportlab.platypus import NextPageTemplate
+
     doc = BaseDocTemplate(output_file, pagesize=letter,
                           leftMargin=0.5*inch, rightMargin=0.5*inch,
                           topMargin=1*inch, bottomMargin=0.5*inch)
@@ -666,21 +673,23 @@ def generate_pdf_report(results, storage_results, config, output_file="report.pd
     memory_elements, memory_savings = create_memory_report_page(results, config, styles)
     storage_elements, storage_savings = create_storage_report_page(storage_results, config, styles)
 
-    # Summary page (first)
+    # Summary page (first) - starts with summary template
     summary_elements = create_summary_page(cpu_savings, memory_savings, storage_savings, config, styles)
     elements.extend(summary_elements)
 
-    # Switch to CPU template
-    from reportlab.platypus import NextPageTemplate
+    # CPU page - switch template BEFORE adding content
     elements.append(NextPageTemplate('cpu'))
+    elements.append(PageBreak())
     elements.extend(cpu_elements)
 
-    # Switch to Memory template
+    # Memory page - switch template BEFORE adding content
     elements.append(NextPageTemplate('memory'))
+    elements.append(PageBreak())
     elements.extend(memory_elements)
 
-    # Switch to Storage template
+    # Storage page - switch template BEFORE adding content
     elements.append(NextPageTemplate('storage'))
+    elements.append(PageBreak())
     elements.extend(storage_elements)
 
     # Build the PDF

@@ -7,7 +7,7 @@ from reportlab.platypus import (BaseDocTemplate, PageTemplate, Table, TableStyle
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib import colors
 from reportlab.lib.units import inch
-from reportlab.lib.enums import TA_LEFT, TA_RIGHT
+from reportlab.lib.enums import TA_LEFT, TA_RIGHT, TA_CENTER
 from datetime import datetime, timedelta
 
 # Define colors to match the example reports
@@ -27,6 +27,31 @@ def get_date_range(days):
 def format_date_range(start_date, end_date, days):
     """Format the date range string for display."""
     return f"{start_date.strftime('%b %d, %Y')} - {end_date.strftime('%b %d, %Y')}  {days} days"
+
+
+def create_cover_page_header(canvas, doc, config):
+    """Create footer for cover page with copyright and page number."""
+    canvas.saveState()
+    page_width = letter[0]
+    left_margin = doc.leftMargin
+    right_margin = doc.rightMargin
+
+    # Draw horizontal line above footer
+    canvas.setStrokeColor(colors.black)
+    canvas.setLineWidth(0.5)
+    canvas.line(left_margin, 50, page_width - right_margin, 50)
+
+    # Copyright text (centered)
+    copyright_text = config.get('copyright', f'Copyright {datetime.now().year} All Rights Reserved.')
+    canvas.setFont('Helvetica', 9)
+    text_width = canvas.stringWidth(copyright_text, 'Helvetica', 9)
+    canvas.drawString((page_width - text_width) / 2, 35, copyright_text)
+
+    # Page number (right aligned)
+    page_num = canvas.getPageNumber()
+    canvas.drawRightString(page_width - right_margin, 35, f"Page {page_num}")
+
+    canvas.restoreState()
 
 
 def create_page_header(canvas, doc, config, report_title):
@@ -86,7 +111,28 @@ def create_page_header(canvas, doc, config, report_title):
     canvas.setLineWidth(1)
     canvas.line(left_margin, line_y, page_width - right_margin, line_y)
 
+    # Draw footer
+    canvas.setStrokeColor(colors.black)
+    canvas.setLineWidth(0.5)
+    canvas.line(left_margin, 50, page_width - right_margin, 50)
+
+    copyright_text = config.get('copyright', f'Copyright {datetime.now().year} All Rights Reserved.')
+    canvas.setFont('Helvetica', 9)
+    canvas.setFillColor(colors.black)
+    text_width = canvas.stringWidth(copyright_text, 'Helvetica', 9)
+    canvas.drawString((page_width - text_width) / 2, 35, copyright_text)
+
+    page_num = canvas.getPageNumber()
+    canvas.drawRightString(page_width - right_margin, 35, f"Page {page_num}")
+
     canvas.restoreState()
+
+
+def create_cover_header_function(config):
+    """Factory function for cover page."""
+    def header(canvas, doc):
+        create_cover_page_header(canvas, doc, config)
+    return header
 
 
 def create_header_function(config, report_title):
@@ -94,6 +140,58 @@ def create_header_function(config, report_title):
     def header(canvas, doc):
         create_page_header(canvas, doc, config, report_title)
     return header
+
+
+def create_cover_page(config, styles):
+    """
+    Create the cover page with centered title and footer.
+    """
+    elements = []
+
+    # Add vertical space to center the title
+    elements.append(Spacer(1, 3*inch))
+
+    # Title style - centered, bold
+    title_style = ParagraphStyle(
+        'CoverTitle',
+        parent=styles['Normal'],
+        fontSize=16,
+        fontName='Helvetica-Bold',
+        textColor=colors.black,
+        alignment=TA_CENTER,
+        spaceAfter=20
+    )
+
+    # Get the report title from config
+    cover_title = config.get('cover_title', 'Optimization Reports for All VM Resources')
+    elements.append(Paragraph(cover_title, title_style))
+
+    return elements
+
+
+def create_business_unit_page(config, styles):
+    """
+    Create the business unit page with name and underline.
+    """
+    elements = []
+
+    # Business unit name style
+    bu_style = ParagraphStyle(
+        'BusinessUnit',
+        parent=styles['Normal'],
+        fontSize=12,
+        fontName='Helvetica-Bold',
+        textColor=colors.black,
+        spaceAfter=5
+    )
+
+    business_unit = config.get('business_unit', 'Default Business Unit')
+    elements.append(Paragraph(f"Business Unit: {business_unit}", bu_style))
+
+    # Add horizontal line under business unit
+    elements.append(HRFlowable(width=2.5*inch, thickness=1, color=colors.black, spaceAfter=20))
+
+    return elements
 
 
 def create_styled_table(data, col_widths=None, has_header=True):
@@ -221,7 +319,15 @@ def create_cpu_report_page(results, config, styles):
     elements.append(Paragraph(f"Total Potential Savings ${total_savings:,.2f}", total_style))
     elements.append(Spacer(1, 12))
 
-    # Create table data
+    # Cell style for text wrapping
+    cell_style = ParagraphStyle(
+        'CellStyle',
+        parent=styles['Normal'],
+        fontSize=9,
+        leading=11
+    )
+
+    # Create table data with Paragraph objects
     table_data = [["Virtual Machine", "Utilization", "Peak Utilization", "CPU Recommendations", "Saving($/Month)"]]
 
     for result in results:
@@ -260,15 +366,15 @@ def create_cpu_report_page(results, config, styles):
             recommendation = "Right-sized"
 
         table_data.append([
-            f"    {hostname}",  # Indent for icon space
-            utilization,
-            peak_str,
-            recommendation,
+            Paragraph(f"&nbsp;&nbsp;{hostname}", cell_style),
+            Paragraph(utilization, cell_style),
+            Paragraph(peak_str, cell_style),
+            Paragraph(recommendation, cell_style),
             f"{monthly_savings:.2f}"
         ])
 
     # Create and add table
-    col_widths = [1.5*inch, 1.6*inch, 1.1*inch, 2.2*inch, 1.1*inch]
+    col_widths = [1.5*inch, 1.5*inch, 1.0*inch, 2.3*inch, 1.0*inch]
     table = create_styled_table(table_data, col_widths)
     elements.append(table)
 
@@ -296,7 +402,15 @@ def create_memory_report_page(results, config, styles):
     elements.append(Paragraph(f"Total Potential Savings ${total_savings:,.2f}", total_style))
     elements.append(Spacer(1, 12))
 
-    # Create table data
+    # Cell style for text wrapping
+    cell_style = ParagraphStyle(
+        'CellStyle',
+        parent=styles['Normal'],
+        fontSize=9,
+        leading=11
+    )
+
+    # Create table data with Paragraph objects
     table_data = [["Virtual Machine", "Utilization", "Peak Utilization", "Memory Recommendations", "Saving($/Month)"]]
 
     for result in results:
@@ -321,15 +435,15 @@ def create_memory_report_page(results, config, styles):
             recommendation = "Right-sized"
 
         table_data.append([
-            f"    {hostname}",
-            utilization,
-            peak_str,
-            recommendation,
+            Paragraph(f"&nbsp;&nbsp;{hostname}", cell_style),
+            Paragraph(utilization, cell_style),
+            Paragraph(peak_str, cell_style),
+            Paragraph(recommendation, cell_style),
             f"{monthly_savings:.2f}"
         ])
 
     # Create and add table
-    col_widths = [1.3*inch, 1.5*inch, 1.0*inch, 2.5*inch, 1.2*inch]
+    col_widths = [1.3*inch, 1.5*inch, 1.0*inch, 2.5*inch, 1.0*inch]
     table = create_styled_table(table_data, col_widths)
     elements.append(table)
 
@@ -646,24 +760,31 @@ def generate_pdf_report(results, storage_results, config, output_file="report.pd
 
     doc = BaseDocTemplate(output_file, pagesize=letter,
                           leftMargin=0.5*inch, rightMargin=0.5*inch,
-                          topMargin=1*inch, bottomMargin=0.5*inch)
+                          topMargin=1*inch, bottomMargin=0.75*inch)
 
     # Create frames for different page types
     frame = Frame(doc.leftMargin, doc.bottomMargin,
                   doc.width, doc.height - 0.5*inch, id='normal')
 
+    # Cover page frame (more space for centered content)
+    cover_frame = Frame(doc.leftMargin, doc.bottomMargin,
+                        doc.width, doc.height, id='cover')
+
     # Page templates for different report sections
+    cover_header = create_cover_header_function(config)
     summary_header = create_header_function(config, "VM Resources Optimization Report")
     cpu_header = create_header_function(config, "CPU Optimization Report")
     memory_header = create_header_function(config, "Memory Optimization Report")
     storage_header = create_header_function(config, "Storage Optimization Report")
 
+    cover_template = PageTemplate(id='cover', frames=cover_frame, onPage=cover_header)
+    business_template = PageTemplate(id='business', frames=frame, onPage=cover_header)
     summary_template = PageTemplate(id='summary', frames=frame, onPage=summary_header)
     cpu_template = PageTemplate(id='cpu', frames=frame, onPage=cpu_header)
     memory_template = PageTemplate(id='memory', frames=frame, onPage=memory_header)
     storage_template = PageTemplate(id='storage', frames=frame, onPage=storage_header)
 
-    doc.addPageTemplates([summary_template, cpu_template, memory_template, storage_template])
+    doc.addPageTemplates([cover_template, business_template, summary_template, cpu_template, memory_template, storage_template])
 
     elements = []
     styles = getSampleStyleSheet()
@@ -673,7 +794,19 @@ def generate_pdf_report(results, storage_results, config, output_file="report.pd
     memory_elements, memory_savings = create_memory_report_page(results, config, styles)
     storage_elements, storage_savings = create_storage_report_page(storage_results, config, styles)
 
-    # Summary page (first) - starts with summary template
+    # Cover page (first)
+    cover_elements = create_cover_page(config, styles)
+    elements.extend(cover_elements)
+
+    # Business unit page
+    elements.append(NextPageTemplate('business'))
+    elements.append(PageBreak())
+    business_elements = create_business_unit_page(config, styles)
+    elements.extend(business_elements)
+
+    # Summary page
+    elements.append(NextPageTemplate('summary'))
+    elements.append(PageBreak())
     summary_elements = create_summary_page(cpu_savings, memory_savings, storage_savings, config, styles)
     elements.extend(summary_elements)
 

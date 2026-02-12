@@ -616,15 +616,61 @@ def fetch_new_relic_data(api_key, account_id):
     return response_json1, response_json2
 
 
+def find_best_fit_size(sizes, required_cpu, required_memory):
+    """
+    Find the smallest VM size that meets CPU and memory requirements.
+    Returns the size config dict or None if no fit found.
+    """
+    # Sort by cost to find cheapest option that fits
+    sorted_sizes = sorted(sizes, key=lambda x: x.get('hourly_cost', float('inf')))
+
+    for size in sorted_sizes:
+        if size.get('cpu', 0) >= required_cpu and size.get('memory', 0) >= required_memory:
+            return size
+
+    # If nothing fits, return the largest available
+    return max(sizes, key=lambda x: (x.get('cpu', 0), x.get('memory', 0))) if sizes else None
+
+
+def find_current_size(sizes, cpu, memory):
+    """
+    Find the VM size that matches current specs (or closest match).
+    """
+    # Try exact match first
+    for size in sizes:
+        if size.get('cpu') == cpu and size.get('memory') == memory:
+            return size
+
+    # Find closest match by CPU and memory
+    sorted_sizes = sorted(sizes, key=lambda x: (
+        abs(x.get('cpu', 0) - cpu) + abs(x.get('memory', 0) - memory)
+    ))
+    return sorted_sizes[0] if sorted_sizes else None
+
+
 def analyze_usage(data, config):
     """
     Analyze CPU and Memory usage data and generate recommendations.
-    Returns results formatted for the new report style.
+
+    Improved logic:
+    - Uses configurable thresholds from config
+    - Matches recommendations to available VM sizes
+    - Calculates savings based on actual hourly costs
+    - Handles both oversized and undersized cases
+    - Uses peak utilization with safety buffer
     """
-    CPU_OVER_THRESHOLD = 80
-    CPU_UNDER_THRESHOLD = 20
-    MEMORY_OVER_THRESHOLD = 80
-    MEMORY_UNDER_THRESHOLD = 20
+    # Get thresholds from config (with defaults)
+    thresholds = config.get('thresholds', {})
+    CPU_OVERSIZED_BELOW = thresholds.get('cpu_oversized_below', 20)
+    CPU_UNDERSIZED_ABOVE = thresholds.get('cpu_undersized_above', 80)
+    CPU_SAFETY_BUFFER = thresholds.get('cpu_safety_buffer', 1.3)
+
+    MEMORY_OVERSIZED_BELOW = thresholds.get('memory_oversized_below', 20)
+    MEMORY_UNDERSIZED_ABOVE = thresholds.get('memory_undersized_above', 80)
+    MEMORY_SAFETY_BUFFER = thresholds.get('memory_safety_buffer', 1.3)
+
+    # Get available VM sizes from config
+    sizes = config.get('sizes', [])
 
     analyzed_results = []
 
@@ -649,30 +695,85 @@ def analyze_usage(data, config):
         peak_mem_percent = result.get('peakMemoryPercent', avg_mem_percent) or avg_mem_percent
 
         mem_used_gb = mem_used_bytes / (1024 ** 3)
-        mem_total_gb = mem_total_bytes / (1024 ** 3) if mem_total_bytes > 0 else (mem_used_gb / (avg_mem_percent / 100) if avg_mem_percent > 0 else 4)
+        mem_total_gb = mem_total_bytes / (1024 ** 3) if mem_total_bytes > 0 else (
+            mem_used_gb / (avg_mem_percent / 100) if avg_mem_percent > 0 else 4
+        )
         peak_mem_gb = (peak_mem_percent / 100) * mem_total_gb
 
-        # Determine recommendations
+        # Initialize recommendations to current values
         recommended_cores = current_cores
         recommended_mem_gb = mem_total_gb
         cpu_monthly_savings = 0
         mem_monthly_savings = 0
+        cpu_status = "Right-sized"
+        mem_status = "Right-sized"
 
-        # CPU recommendation logic
-        if avg_cpu_percent < CPU_UNDER_THRESHOLD and current_cores > 1:
-            # Oversized - recommend fewer cores
-            recommended_cores = max(1, int(current_cores * (peak_cpu_percent / 100 * 1.5)))
-            if recommended_cores < current_cores:
-                # Calculate savings (simplified - would need actual pricing data)
-                cpu_monthly_savings = (current_cores - recommended_cores) * 10  # $10/core/month estimate
+        # Find current VM size for cost comparison
+        current_size = find_current_size(sizes, current_cores, int(mem_total_gb))
+        current_hourly = current_size.get('hourly_cost', 0) if current_size else 0
 
-        # Memory recommendation logic
-        if avg_mem_percent < MEMORY_UNDER_THRESHOLD and mem_total_gb > 1:
-            # Oversized - recommend less memory
-            recommended_mem_gb = max(1, peak_mem_gb * 1.3)  # Add 30% buffer
-            if recommended_mem_gb < mem_total_gb:
-                # Calculate savings (simplified)
-                mem_monthly_savings = (mem_total_gb - recommended_mem_gb) * 5  # $5/GB/month estimate
+        # CPU Analysis: Calculate required cores based on peak usage + safety buffer
+        # Peak CPU as fraction of total capacity, with safety buffer
+        required_cpu_fraction = (peak_cpu_percent / 100) * CPU_SAFETY_BUFFER
+        required_cores = max(1, int(current_cores * required_cpu_fraction + 0.5))  # Round up
+
+        # Memory Analysis: Calculate required memory based on peak usage + safety buffer
+        required_mem_gb = max(1, peak_mem_gb * MEMORY_SAFETY_BUFFER)
+
+        # Determine if oversized or undersized
+        is_cpu_oversized = avg_cpu_percent < CPU_OVERSIZED_BELOW and current_cores > 1
+        is_cpu_undersized = avg_cpu_percent > CPU_UNDERSIZED_ABOVE
+        is_mem_oversized = avg_mem_percent < MEMORY_OVERSIZED_BELOW and mem_total_gb > 1
+        is_mem_undersized = avg_mem_percent > MEMORY_UNDERSIZED_ABOVE
+
+        # Find best fit size if we need to resize
+        if is_cpu_oversized or is_mem_oversized:
+            # For oversized, find smallest size that fits requirements
+            best_fit = find_best_fit_size(sizes, required_cores, required_mem_gb)
+
+            if best_fit:
+                new_hourly = best_fit.get('hourly_cost', 0)
+                if new_hourly < current_hourly:
+                    recommended_cores = best_fit.get('cpu', current_cores)
+                    recommended_mem_gb = best_fit.get('memory', mem_total_gb)
+
+                    # Calculate monthly savings (720 hours/month)
+                    hourly_savings = current_hourly - new_hourly
+                    total_monthly_savings = hourly_savings * 720
+
+                    # Attribute savings to CPU or Memory based on which triggered
+                    if is_cpu_oversized and is_mem_oversized:
+                        cpu_monthly_savings = total_monthly_savings / 2
+                        mem_monthly_savings = total_monthly_savings / 2
+                    elif is_cpu_oversized:
+                        cpu_monthly_savings = total_monthly_savings
+                        cpu_status = "Oversized"
+                    else:
+                        mem_monthly_savings = total_monthly_savings
+                        mem_status = "Oversized"
+
+        elif is_cpu_undersized or is_mem_undersized:
+            # For undersized, find size that can handle the load
+            upgrade_cores = current_cores * 2 if is_cpu_undersized else current_cores
+            upgrade_mem = mem_total_gb * 1.5 if is_mem_undersized else mem_total_gb
+
+            best_fit = find_best_fit_size(sizes, upgrade_cores, upgrade_mem)
+
+            if best_fit:
+                recommended_cores = best_fit.get('cpu', current_cores)
+                recommended_mem_gb = best_fit.get('memory', mem_total_gb)
+
+                if is_cpu_undersized:
+                    cpu_status = "Undersized"
+                if is_mem_undersized:
+                    mem_status = "Undersized"
+
+                # Negative savings indicates cost increase (upgrade needed)
+                new_hourly = best_fit.get('hourly_cost', 0)
+                if new_hourly > current_hourly:
+                    cost_increase = (new_hourly - current_hourly) * 720
+                    # Store as negative to indicate cost, not savings
+                    # For reporting, we typically don't show upgrade costs as "savings"
 
         analyzed_results.append({
             "Hostname": hostname,
@@ -682,11 +783,13 @@ def analyze_usage(data, config):
             "PeakCPU": peak_cpu_mhz,
             "CurrentCores": current_cores,
             "RecommendedCores": recommended_cores,
+            "CPUStatus": cpu_status,
             "averageMemoryUtil": avg_mem_percent,
             "MemoryUsedGB": mem_used_gb,
             "MemoryTotalGB": mem_total_gb,
             "PeakMemoryGB": peak_mem_gb,
             "RecommendedMemoryGB": recommended_mem_gb,
+            "MemoryStatus": mem_status,
             "Savings": {
                 "CPU_Monthly": cpu_monthly_savings,
                 "Memory_Monthly": mem_monthly_savings
@@ -699,12 +802,31 @@ def analyze_usage(data, config):
 def analyze_storage(data, config):
     """
     Analyze storage data and generate recommendations.
-    Returns results formatted for the new report style with mount points.
+
+    Improved logic:
+    - Uses growth forecasts (predictLinear) to anticipate future needs
+    - Configurable thresholds for oversized/critical/warning
+    - Accounts for forecast horizon (week/month/quarter)
+    - Flags critical and warning conditions
+    - Calculates savings based on configurable cost per GB
     """
     storage_results = []
 
     if data is None:
         return storage_results
+
+    # Get thresholds from config (with defaults)
+    thresholds = config.get('thresholds', {})
+    OVERSIZED_BELOW = thresholds.get('storage_oversized_below', 30)
+    CRITICAL_ABOVE = thresholds.get('storage_critical_above', 85)
+    WARNING_ABOVE = thresholds.get('storage_warning_above', 70)
+    SAFETY_BUFFER = thresholds.get('storage_safety_buffer', 1.5)
+    MIN_SIZE_GB = thresholds.get('storage_min_size_gb', 50)
+    USE_FORECAST = thresholds.get('use_growth_forecast', True)
+    FORECAST_HORIZON = thresholds.get('forecast_horizon', 'quarter')
+
+    # Cost per GB per month (configurable, default $0.10)
+    COST_PER_GB = thresholds.get('storage_cost_per_gb', 0.10)
 
     for result in data['data']['actor']['account']['nrql']['results']:
         facet = result.get('facet', ['Unknown', '/'])
@@ -722,17 +844,68 @@ def analyze_storage(data, config):
         disk_used_gb = disk_used_bytes / (1024 ** 3)
         disk_total_gb = disk_total_bytes / (1024 ** 3)
 
-        # Recommendation logic
+        # Get forecast data
+        week_estimate = result.get('weekEstimate', current_percent) or current_percent
+        month_estimate = result.get('monthEstimate', current_percent) or current_percent
+        quarter_estimate = result.get('quarterEstimate', current_percent) or current_percent
+
+        # Select forecast based on horizon setting
+        if FORECAST_HORIZON == 'week':
+            forecast_percent = week_estimate
+        elif FORECAST_HORIZON == 'month':
+            forecast_percent = month_estimate
+        else:  # quarter
+            forecast_percent = quarter_estimate
+
+        # Initialize recommendation values
         recommended_size_gb = disk_total_gb
         storage_monthly_savings = 0
+        status = "Right-sized"
 
-        # If utilization is low, recommend smaller disk
-        if current_percent < 30 and disk_total_gb > 50:
-            # Recommend size that would give ~70% utilization
-            recommended_size_gb = max(disk_used_gb * 1.5, 50)  # Minimum 50GB or 150% of used
+        # Determine storage status based on current AND forecasted utilization
+        is_critical = current_percent > CRITICAL_ABOVE or (USE_FORECAST and forecast_percent > CRITICAL_ABOVE)
+        is_warning = current_percent > WARNING_ABOVE or (USE_FORECAST and forecast_percent > WARNING_ABOVE)
+        is_oversized = current_percent < OVERSIZED_BELOW and disk_total_gb > MIN_SIZE_GB
+
+        if is_critical:
+            status = "Critical"
+            # Recommend expansion: enough space to bring forecast to 70% utilization
+            if USE_FORECAST and forecast_percent > 0:
+                # Calculate projected used GB at forecast time
+                projected_used_gb = (forecast_percent / 100) * disk_total_gb
+                # Size that would make projected usage = 70%
+                recommended_size_gb = max(disk_total_gb, projected_used_gb / 0.70)
+            else:
+                # Without forecast, recommend 50% increase
+                recommended_size_gb = disk_total_gb * 1.5
+
+        elif is_warning:
+            status = "Warning"
+            # Monitor closely, may need expansion soon
+            if USE_FORECAST and forecast_percent > CRITICAL_ABOVE:
+                projected_used_gb = (forecast_percent / 100) * disk_total_gb
+                recommended_size_gb = max(disk_total_gb, projected_used_gb / 0.70)
+
+        elif is_oversized:
+            status = "Oversized"
+            # Calculate recommended size based on current usage + safety buffer
+            # But also consider growth forecast to avoid recommending too small
+
+            if USE_FORECAST and forecast_percent > current_percent:
+                # Growing disk - use forecast to determine size
+                projected_used_gb = (forecast_percent / 100) * disk_total_gb
+                recommended_size_gb = max(MIN_SIZE_GB, projected_used_gb * SAFETY_BUFFER)
+            else:
+                # Stable or shrinking - use current usage
+                recommended_size_gb = max(MIN_SIZE_GB, disk_used_gb * SAFETY_BUFFER)
+
+            # Only recommend downsizing if it's actually smaller
             if recommended_size_gb < disk_total_gb:
-                # Calculate savings (simplified - $0.10/GB/month estimate)
-                storage_monthly_savings = (disk_total_gb - recommended_size_gb) * 0.10
+                storage_monthly_savings = (disk_total_gb - recommended_size_gb) * COST_PER_GB
+            else:
+                # Forecast shows growth, don't recommend downsizing
+                recommended_size_gb = disk_total_gb
+                status = "Right-sized"
 
         storage_results.append({
             "Hostname": hostname,
@@ -741,9 +914,10 @@ def analyze_storage(data, config):
             "DiskTotalGB": disk_total_gb,
             "DiskPercent": current_percent,
             "RecommendedSizeGB": recommended_size_gb,
-            "WeekEstimate": result.get('weekEstimate', current_percent),
-            "MonthEstimate": result.get('monthEstimate', current_percent),
-            "QuarterEstimate": result.get('quarterEstimate', current_percent),
+            "WeekEstimate": week_estimate,
+            "MonthEstimate": month_estimate,
+            "QuarterEstimate": quarter_estimate,
+            "Status": status,
             "Savings": {
                 "Storage_Monthly": storage_monthly_savings
             }
@@ -841,12 +1015,14 @@ def generate_demo_data():
             "PeakCPU": 2200,
             "CurrentCores": 4,
             "RecommendedCores": 2,
+            "CPUStatus": "Oversized",
             "averageMemoryUtil": 45.0,
             "MemoryUsedGB": 3.6,
             "MemoryTotalGB": 8.0,
             "PeakMemoryGB": 4.2,
             "RecommendedMemoryGB": 8.0,
-            "Savings": {"CPU_Monthly": 20.0, "Memory_Monthly": 0.0}
+            "MemoryStatus": "Right-sized",
+            "Savings": {"CPU_Monthly": 47.95, "Memory_Monthly": 0.0}
         },
         {
             "Hostname": "APRSERVER106 - SC",
@@ -855,13 +1031,15 @@ def generate_demo_data():
             "CPUTotalMHz": 10000,
             "PeakCPU": 3700,
             "CurrentCores": 4,
-            "RecommendedCores": 3,
+            "RecommendedCores": 2,
+            "CPUStatus": "Oversized",
             "averageMemoryUtil": 62.0,
             "MemoryUsedGB": 4.96,
             "MemoryTotalGB": 8.0,
             "PeakMemoryGB": 5.5,
             "RecommendedMemoryGB": 8.0,
-            "Savings": {"CPU_Monthly": 10.0, "Memory_Monthly": 0.0}
+            "MemoryStatus": "Right-sized",
+            "Savings": {"CPU_Monthly": 47.95, "Memory_Monthly": 0.0}
         },
         {
             "Hostname": "ESGAGS10",
@@ -870,13 +1048,15 @@ def generate_demo_data():
             "CPUTotalMHz": 4200,
             "PeakCPU": 1500,
             "CurrentCores": 2,
-            "RecommendedCores": 1,
+            "RecommendedCores": 2,
+            "CPUStatus": "Oversized",
             "averageMemoryUtil": 74.99,
             "MemoryUsedGB": 3.0,
             "MemoryTotalGB": 4.0,
             "PeakMemoryGB": 3.0,
-            "RecommendedMemoryGB": 3.7,
-            "Savings": {"CPU_Monthly": 10.0, "Memory_Monthly": 1.5}
+            "RecommendedMemoryGB": 4.0,
+            "MemoryStatus": "Right-sized",
+            "Savings": {"CPU_Monthly": 0.0, "Memory_Monthly": 0.0}
         },
         {
             "Hostname": "londoncw",
@@ -885,13 +1065,15 @@ def generate_demo_data():
             "CPUTotalMHz": 10000,
             "PeakCPU": 4400,
             "CurrentCores": 4,
-            "RecommendedCores": 3,
+            "RecommendedCores": 2,
+            "CPUStatus": "Oversized",
             "averageMemoryUtil": 55.0,
             "MemoryUsedGB": 8.8,
             "MemoryTotalGB": 16.0,
             "PeakMemoryGB": 10.0,
             "RecommendedMemoryGB": 16.0,
-            "Savings": {"CPU_Monthly": 10.0, "Memory_Monthly": 0.0}
+            "MemoryStatus": "Right-sized",
+            "Savings": {"CPU_Monthly": 47.95, "Memory_Monthly": 0.0}
         },
         {
             "Hostname": "spider",
@@ -900,13 +1082,15 @@ def generate_demo_data():
             "CPUTotalMHz": 29900,
             "PeakCPU": 5200,
             "CurrentCores": 12,
-            "RecommendedCores": 3,
-            "averageMemoryUtil": 35.0,
-            "MemoryUsedGB": 11.2,
+            "RecommendedCores": 2,
+            "CPUStatus": "Oversized",
+            "averageMemoryUtil": 15.0,
+            "MemoryUsedGB": 4.8,
             "MemoryTotalGB": 32.0,
-            "PeakMemoryGB": 14.0,
-            "RecommendedMemoryGB": 32.0,
-            "Savings": {"CPU_Monthly": 90.0, "Memory_Monthly": 0.0}
+            "PeakMemoryGB": 6.2,
+            "RecommendedMemoryGB": 8.0,
+            "MemoryStatus": "Oversized",
+            "Savings": {"CPU_Monthly": 90.72, "Memory_Monthly": 90.72}
         },
     ]
 
@@ -917,8 +1101,12 @@ def generate_demo_data():
             "DiskUsedGB": 111.3,
             "DiskTotalGB": 149.5,
             "DiskPercent": 74.44,
-            "RecommendedSizeGB": 129,
-            "Savings": {"Storage_Monthly": 2.05}
+            "RecommendedSizeGB": 149.5,
+            "WeekEstimate": 76.0,
+            "MonthEstimate": 80.0,
+            "QuarterEstimate": 88.0,
+            "Status": "Warning",
+            "Savings": {"Storage_Monthly": 0.0}
         },
         {
             "Hostname": "londoncw",
@@ -926,8 +1114,12 @@ def generate_demo_data():
             "DiskUsedGB": 57.9,
             "DiskTotalGB": 200.0,
             "DiskPercent": 28.95,
-            "RecommendedSizeGB": 67,
-            "Savings": {"Storage_Monthly": 13.30}
+            "RecommendedSizeGB": 87,
+            "WeekEstimate": 29.5,
+            "MonthEstimate": 31.0,
+            "QuarterEstimate": 35.0,
+            "Status": "Oversized",
+            "Savings": {"Storage_Monthly": 11.30}
         },
         {
             "Hostname": "ESGAGS10",
@@ -936,6 +1128,23 @@ def generate_demo_data():
             "DiskTotalGB": 100.0,
             "DiskPercent": 45.0,
             "RecommendedSizeGB": 100.0,
+            "WeekEstimate": 46.0,
+            "MonthEstimate": 48.0,
+            "QuarterEstimate": 52.0,
+            "Status": "Right-sized",
+            "Savings": {"Storage_Monthly": 0.0}
+        },
+        {
+            "Hostname": "webserver01",
+            "MountPoint": "/var/log",
+            "DiskUsedGB": 180.0,
+            "DiskTotalGB": 200.0,
+            "DiskPercent": 90.0,
+            "RecommendedSizeGB": 300.0,
+            "WeekEstimate": 92.0,
+            "MonthEstimate": 98.0,
+            "QuarterEstimate": 115.0,
+            "Status": "Critical",
             "Savings": {"Storage_Monthly": 0.0}
         },
     ]

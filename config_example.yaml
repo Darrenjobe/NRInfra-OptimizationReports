@@ -21,6 +21,29 @@ icons:
   storage: "images/icons/storage.png"
   vm: "images/icons/vm.png"
 
+# Right-sizing thresholds and settings
+thresholds:
+  # CPU thresholds (percentage)
+  cpu_oversized_below: 20      # Avg CPU below this = oversized
+  cpu_undersized_above: 80     # Avg CPU above this = undersized
+  cpu_safety_buffer: 1.3       # Multiply peak by this for headroom (30% buffer)
+
+  # Memory thresholds (percentage)
+  memory_oversized_below: 20   # Avg memory below this = oversized
+  memory_undersized_above: 80  # Avg memory above this = undersized
+  memory_safety_buffer: 1.3    # Multiply peak by this for headroom (30% buffer)
+
+  # Storage thresholds (percentage)
+  storage_oversized_below: 30  # Current utilization below this = oversized
+  storage_critical_above: 85   # Current or forecasted above this = critical
+  storage_warning_above: 70    # Current or forecasted above this = warning
+  storage_safety_buffer: 1.5   # Multiply used space by this for recommended size
+  storage_min_size_gb: 50      # Minimum recommended disk size
+
+  # Use forecast data for storage recommendations
+  use_growth_forecast: true    # Factor in predictLinear forecasts
+  forecast_horizon: "quarter"  # "week", "month", or "quarter"
+
 # Instance/VM sizes for recommendations
 sizes:
   - name: "t3.micro"
